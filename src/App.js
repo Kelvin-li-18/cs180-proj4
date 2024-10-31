@@ -571,7 +571,23 @@ function App() {
           ]
         },
       ]
-    }
+    },
+    {
+      id: 'reflection',
+      title: 'Reflection',
+      sections: [
+        {
+          id: 'lowes-trick',
+          title: 'Lowe\'s Trick',
+          content: [
+            {
+              type: 'paragraph',
+              text: 'I find Lowe\'s trick particularly interesting because it\'s a simple yet highly effective approach that doesn\'t rely on complex optimization but rather a clever, intuitive decision rule. It shows how simplicity prevails.'
+            },
+          ]
+        }
+      ]
+    },
   ];
 
   return (
