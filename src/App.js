@@ -22,11 +22,11 @@ function App() {
         },
         {
           id: 'feature-detection-and-matching',
-          title: 'Feature Detection and Matching',
+          title: 'Feature Detector, Descriptor and Matching',
           content: [
             {
               type: 'paragraph',
-              text: 'For now, feature detection and matching is done manually. Corresponding keypoints between pairs of images are identified.'
+              text: 'Features can be detected and matched manually or automatically. We will demonstrate both approaches.'
             },
           ]
         },
@@ -114,8 +114,8 @@ function App() {
                 {
                   text: 'Identify keypoints and compute homography:',
                   sublist: [
-                    'Identify corresponding keypoints between pairs of overlapping images.',
-                    'Compute the homography between each pair of images.'
+                    'Identify corresponding keypoints between pairs of overlapping images. This is done manually.',
+                    'Compute the homography (least squares) between each pair of images.'
                   ]
                 },
                 {
@@ -207,6 +207,277 @@ function App() {
       ]
     },
     {
+      id: 'automatic-feature-matchin',
+      title: 'Automatic Feature Matching',
+      sections: [
+        {
+          id: 'feature-detector',
+          title: 'Feature Detector',
+          content: [
+            {
+              type: 'paragraph',
+              text: 'We first note that corners make good features. A corner is a point in an image which produces strong change in intensity when shifted in any direction.'
+            },
+            {
+              type: 'paragraph',
+              text: 'We use the Harris Detector to find the corners of an image. The Harris matrix at position (x,y) is the smoothed outer product of the gradients:'
+            },
+            {
+              type: 'math',
+              text: '\\( \\mathbf{H}(x, y) = \\sum_{(i, j) \\in W} \\nabla I(i, j) \\nabla I(i, j)^T \\cdot g_{\\sigma_i}(i, j) \\)'
+            },
+            {
+              type: 'paragraph',
+              text: 'To interpret the Harris matrix, we start with computing the change in appearance of a window W for a shift (u,v):'
+            },
+            {
+              type: 'math',
+              text: `
+                \\(
+                \\begin{aligned}
+                E(u, v) &= \\sum_{(x, y) \\in W} \\left[ I(x + u, y + v) - I(x, y) \\right]^2 \\\\
+                &\\approx \\sum_{(x, y) \\in W} \\left[ I(x, y) + \\nabla I(x, y)^T \\begin{bmatrix} u \\\\ v \\end{bmatrix} - I(x, y) \\right]^2 \\\\
+                &= \\sum_{(x, y) \\in W} \\left( \\nabla I(x, y)^T \\begin{bmatrix} u \\\\ v \\end{bmatrix} \\right)^2 \\\\
+                &= \\sum_{(x, y) \\in W} \\begin{bmatrix} u & v \\end{bmatrix}  \\nabla I(x, y) \\nabla I(x, y)^T  \\begin{bmatrix} u \\\\ v \\end{bmatrix}
+                \\end{aligned}
+                \\)
+              `
+            },
+            {
+              type: 'paragraph',
+              text: 'We can analyze the level sets of this term, which form an ellipse. By diagonalizing the Harris matrix, we can compute the semi-major and semi-minor axes of the ellipse.'
+            },
+            {
+              type: 'math',
+              text: `
+                \\(
+                \\begin{aligned}
+                x^T \\mathbf{H} x = 1 \\\\
+                x^T V \\Lambda V^T x = 1 \\\\
+                a = \\sqrt{\\frac{1}{\\lambda_{\\min}}}, \\quad b = \\sqrt{\\frac{1}{\\lambda_{\\max}}}
+                \\end{aligned}
+                \\)
+              `
+            },
+            {
+              type: 'image-grid',
+              columns: 1,
+              images: [
+                { title: 'Level sets', imageUrl: `${process.env.PUBLIC_URL}/images/ellipse.png` },
+              ]
+            },
+            {
+              type: 'paragraph',
+              text: 'For large change in all directions, we would want both eigenvalues to be large. One such way to do this is to compute the following ratio:',
+            },
+            {
+              type: 'math',
+              text: `
+                \\(
+                \\begin{aligned}
+                R &= \\frac{\\lambda_1 \\lambda_2}{\\lambda_1 + \\lambda_2} \\\\
+                  &= \\frac{\\det(\\mathbf{H})}{\\operatorname{tr}(\\mathbf{H})}
+                \\end{aligned}
+                \\)
+              `
+            },
+            {
+              type: 'paragraph',
+              text: 'In addition to requiring R to be above a certain threshold, we also add a requirement for R of a point to be a maxima over a small local neighbourhood. Here are some results:',
+            },
+            {
+              type: 'image-grid',
+              columns: 4,
+              images: [
+                { title: 'House 1', imageUrl: `${process.env.PUBLIC_URL}/images/1737_1.jpg` },
+                { title: 'House 1 (Harris corners) ', imageUrl: `${process.env.PUBLIC_URL}/images/1737_1_corners.jpg` },
+                { title: 'House 2', imageUrl: `${process.env.PUBLIC_URL}/images/1737_2.jpg` },
+                { title: 'House 2 (Harris corners) ', imageUrl: `${process.env.PUBLIC_URL}/images/1737_2_corners.jpg` },              ]
+            },
+            {
+              type: 'paragraph',
+              text: 'Next, we perform adaptive non-maximum suppression.  The goal of this is to retain only the interest points with the highest R while ensuring that they are spread out (for better alignment). This is first done by computing the suppression radius of every point and keeping the top 500 points with the largest suppression radius. The suppression radius is calculated by:'
+            },
+            {
+              type: 'math',
+              text: '\\( r_i = \\min_j \\| \\mathbf{x}_i - \\mathbf{x}_j \\|_2, \\; \\text{s.t.} \\; R(\\mathbf{x}_i) < c_{\\text{robust}} R(\\mathbf{x}_j), \\; \\mathbf{x}_j \\in \\mathcal{I} \\)'
+            },
+            {
+              type: 'paragraph',
+              text: 'To improve the efficiency of suppression radius calculation, each point is compared only to its nearest neighbors (using a kdtree) in decreasing order of intensity and stops once a neighbor with a higher response value is found. The top 500 points with the largest suppression radii from each image are selected as follows:'
+            },
+            {
+              type: 'image-grid',
+              columns: 2,
+              images: [
+                { title: 'House 1 Suppressed Points ', imageUrl: `${process.env.PUBLIC_URL}/images/1737_1_corners_anms.jpg` },              
+                { title: 'House 2 Suppressed Points ', imageUrl: `${process.env.PUBLIC_URL}/images/1737_2_corners_anms.jpg` },              
+              ]
+            }
+          ]
+        },
+        
+        {
+          id: 'feature-descriptor',
+          title: 'Feature Descriptor',
+          content: [
+            {
+              type: 'paragraph',
+              text: 'For each of the 500 selected interest points, we compute a mini-MOPS (Multi-Scale Oriented Patches) descriptor. For this part of the project, the descriptor is only single-scale and not oriented. This involves extracting a 40x40 pixel patch centered around each interest point, then resizing it to an 8x8 patch using anti-aliasing (Gaussian blur). Finally, we normalize the resulting 8x8 patch to make the descriptor invariant to illumination differences.'
+            },
+            {
+              type: 'image-grid',
+              columns: 1,
+              images: [
+                { title: 'Example descriptors', imageUrl: `${process.env.PUBLIC_URL}/images/mops.jpg` },              
+              ]
+            }
+          ]
+        },
+        {
+          id: 'feature-matching',
+          title: 'Feature Matching',
+          content: [
+            {
+              type: 'paragraph',
+              text: 'At this stage, we have a set of feature points and their descriptors. To identify corresponding points between two images, we compute the L2 distance between each descriptor in one image and its first and second nearest neighbors (1NN and 2NN) in the other image. We accept a match if the ratio of the distance to the 1NN and the 2NN is below a specified threshold, following Lowe\'s trick. This ensures that the closest neighbor is significantly closer than the second-closest, indicating a likely correct match. Additionally, we enforce bidirectional matching, meaning the corresponding keypoints in both images must be mutually nearest neighbors. For this example, only 170 out of the 500 keypoints are retained:'
+            },
+            {
+              type: 'image-grid',
+              columns: 1,
+              images: [
+                { title: 'Matched Keypoints ', imageUrl: `${process.env.PUBLIC_URL}/images/mutual_matches_joined12.jpg` },              
+              ]
+            }
+          ]
+        },
+        {
+          id: 'ransac',
+          title: 'Computing Homography (RANSAC)',
+          content: [
+            {
+              type: 'paragraph',
+              text: 'We perform Random Sample Consensus to further filter out the good from the bad matches.'
+            },
+            {
+              type: 'list',
+              items: [
+                'Select 4 feature points at random (sampled without replacement).',
+                'Compute the homography H from these 4 points. With exactly 4 points, each providing 2 equations, we can solve for H exactly rather than using a least-squares estimate.',
+                'Using this H, transform all feature points in image 1 and identify inliers where the L2 distance between the transformed point and the corresponding keypoint in image 2 is less than 1 pixel.',
+                'Repeat steps 1 to 3 for 10,000 iterations, keeping track of the largest set of inliers found.',
+                'After the RANSAC loop terminates, compute the least-squares estimate for H using all inliers to obtain the final transformation matrix.'
+              ]
+            },
+            {
+              type: 'image-grid',
+              columns: 1,
+              images: [
+                { title: 'Inliers, after RANSAC', imageUrl: `${process.env.PUBLIC_URL}/images/ransac_12.jpg` },              
+              ]
+            }
+          ]
+        },
+        {
+          id: 'mosaic-results',
+          title: 'Results',
+          content: [
+            {
+              type: 'paragraph',
+              text: 'After computing H, we perform the same steps 2-4 from the Image Mosaic section. Here are some results:'
+            },
+            {
+              type: 'image-grid',
+              columns: 2,
+              images: [
+                { title: 'House (manual)', imageUrl: `${process.env.PUBLIC_URL}/images/1737_final.jpg` },              
+                { title: 'House (automatic)', imageUrl: `${process.env.PUBLIC_URL}/images/1737_final_auto.jpg` },
+                { title: 'VLSB (manual)', imageUrl: `${process.env.PUBLIC_URL}/images/vlsb12.jpg` },              
+                { title: 'VLSB (automatic)', imageUrl: `${process.env.PUBLIC_URL}/images/vlsb_1_2_auto.jpg` },
+                { title: 'Tree (manual)', imageUrl: `${process.env.PUBLIC_URL}/images/tree12.jpg` },              
+                { title: 'Tree (automatic)', imageUrl: `${process.env.PUBLIC_URL}/images/tree_1_2_auto.jpg` },              
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'adding-invariance',
+      title: 'Scale and Rotation Invariance',
+      sections: [
+        {
+          id: 'scale-invariance',
+          title: 'Scale Invariance',
+          content: [
+            {
+              type: 'paragraph',
+              text: 'To enable detection of Harris corners in different scales, we form a Gaussian Pyramid with subsampling rate 2 and perform the Harris corner detection across all these different layers. The MOPS descriptor formed for each feature point is formed from a 40x40 patch from the layer where the corner is taken from. To resize this 40x40 patch to 8x8, we can just use higher levels of the Gaussian Pyramid rather than having to do this resizing again.',
+            },
+          ]
+        },
+        
+        {
+          id: 'rotation-invariance',
+          title: 'Rotation Invariance',
+          content: [
+            {
+              type: 'paragraph',
+              text: '2 matching corners may be rotated relative to one another. In the initial implementation, we computed the mini-MOPS detector without accounting for the orientation of the corner, which may result in missing out potential good matches or worse - wrongfully classifying bad matches as good. To fix this, when detecting the Harris Corners, we compute the orientation of the interest points. This is done by first smoothing the layer where the corner is taken from and then computing the orientation vector v.',
+            },
+            {
+              type: 'math',
+              text: `\\[
+                \\mathbf{u}_l(x, y) = \\nabla_{\\sigma_o} I_l(x, y)
+              \\]`
+            },
+            {
+              type: 'math',
+              text: `\\[
+                \\begin{aligned}
+                  \\text{Let} \\; \\mathbf{v} &= \\frac{\\mathbf{u}_{l}}{\\| \\mathbf{u}_{l} \\|}, \\\\
+                  \\text{where} \\; \\mathbf{v} &= \\begin{bmatrix} \\cos \\theta \\\\ \\sin \\theta \\end{bmatrix}.
+                \\end{aligned}
+              \\]`
+            },
+            {
+              type: 'paragraph',
+              text: 'When computing the MOPS descriptor, we first rotate the 40x40 window around the feature point based on its orientation vector before resizing it into 8x8 and normalizing. This way, all corners will be aligned to the same orientation, making the feature detection rotationally invariant.',
+            },
+          ]
+        },
+        {
+          id: 'results-with-invariance',
+          title: 'Results',
+          content: [
+            {
+              type: 'paragraph',
+              text: 'The scale and rotational invariance improves the robustness of the matching, giving better alignment and stitching.',
+            },
+            {
+              type: 'image-grid',
+              columns: 1,
+              images: [
+                { title: 'MOPS descriptors', imageUrl: `${process.env.PUBLIC_URL}/images/mops2.jpg` },              
+              ]
+            },
+            {
+              type: 'paragraph',
+              text: 'From the examples below, we can see that the addition of scale and rotational invariance greatly improves the alignment and stitching.',
+            },
+            {
+              type: 'image-grid',
+              columns: 2,
+              images: [
+                { title: 'No scale and rotational invariance', imageUrl: `${process.env.PUBLIC_URL}/images/vlsb_1_2_auto.jpg` },              
+                { title: 'With scale and rotational invariance', imageUrl: `${process.env.PUBLIC_URL}/images/vlsb12_auto_mops.jpg` },              
+              ]
+            }
+          ]
+        },
+      ]
+    },
+    {
       id: 'homography-cylindrical',
       title: 'Homography onto Cylindrical Surface and Panorama',
       sections: [
@@ -233,6 +504,17 @@ function App() {
             {
               type: 'math',
               text: '\\( \\hat{x} = \\sin\\left( \\frac{\\theta}{f} \\right), \\quad \\hat{y} = \\frac{h}{f}, \\quad \\hat{z} = \\cos\\left( \\frac{\\theta}{f} \\right) \\)'
+            },
+            {
+              type: 'paragraph',
+              text: 'Here is an example of a reprojected image:'
+            },
+            {
+              type: 'image-grid',
+              columns: 1,
+              images: [
+                { title: 'Reprojected', imageUrl: `${process.env.PUBLIC_URL}/images/im1c.jpg` },
+              ]
             },  
           ]
         },
